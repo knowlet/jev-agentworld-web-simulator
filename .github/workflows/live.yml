@@ -38,8 +38,8 @@ jobs:
       - name: Require AI Gateway secret
         run: |
           if [ -z "$AI_GATEWAY_API_KEY" ]; then echo 'Missing AI_GATEWAY_API_KEY (or JEV_AI_GATEWAY_API_KEY)'; exit 1; fi
-      - name: Install dependencies
-        run: bun install
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
       - run: bun run verify:json-render
       - run: bun run build
       - run: bunx playwright install --with-deps chromium
