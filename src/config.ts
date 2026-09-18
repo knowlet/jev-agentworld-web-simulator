@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { VERSION } from './domain';
 
 export interface Config {
@@ -48,7 +47,7 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
 export function namespace(c: Config): string {
   // Credentials never enter the cache key or diagnostics. Composition settings do,
   // because the cached spec is part of the persistent simulated world observation.
-  return createHash('sha256').update(JSON.stringify([VERSION, c.epoch, c.mode, c.base, c.model,
+  return new Bun.CryptoHasher('sha256').update(JSON.stringify([VERSION, c.epoch, c.mode, c.base, c.model,
     c.jevModel, c.jsonMode, c.thinking, c.maxTokens, c.composeMaxSteps, c.composeMaxElements, c.composeMaxDepth]))
     .digest('hex').slice(0, 24);
 }

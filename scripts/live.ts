@@ -13,7 +13,7 @@ await mkdir('reports', { recursive: true });
 const report: Record<string, unknown> = { mode: 'live', startedAt: new Date().toISOString(), status: 'failed', checks: [], jsonRenderUpstream: JSON_RENDER_UPSTREAM };
 const checks = report.checks as string[];
 let store: Store | undefined;
-let app: ReturnType<typeof createApp> | undefined;
+let running: ReturnType<typeof listen> | undefined;
 let providers: Providers | undefined;
 try {
   const config = loadConfig({ ...process.env, APP_MODE: 'live' });
@@ -21,7 +21,7 @@ try {
   store = new Store(':memory:', namespace(config) + '-smoke');
   providers = new Providers(config);
   const world = new World(store, providers);
-  app = createApp(world); const base = await listen(app, 0);
+  running = listen(createApp(world), 0); const base = running.base;
   const request = async (path: string, body: unknown) => {
     const res = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const result = await res.json();
@@ -66,6 +66,6 @@ try {
   report.finishedAt = new Date().toISOString();
   await writeFile('reports/live.json', JSON.stringify(report, null, 2));
   await writeFile('reports/live.md', `# Live smoke: ${report.status}\n\n${checks.map(c => `- PASS: ${c}`).join('\n')}\n\n${report.error ? `Error: ${report.error}\n` : ''}\nGenerated observations are fictional. This is an integration smoke test, not a factuality or world-model quality benchmark.\n`);
-  if (app) await new Promise<void>(resolve => { app!.close(() => resolve()); app!.closeIdleConnections(); });
+  if (running) await running.stop();
   store?.close();
 }

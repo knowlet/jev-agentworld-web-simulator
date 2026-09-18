@@ -8,6 +8,7 @@
 - **Jev** 負責 bounded decisions，包括 search intent、page policy，以及 UI composition。
 - **json-render 官方 experimental Jev integration** (`experimental_createEvaluator` + `experimental_composeSpec`) 直接把 app-owned component candidates 組成正式 `Spec`。
 - **React + @json-render/react** 只渲染 server 已驗證、已 cache 的 `Spec`。
+- **Bun 1.4.2** 負責 runtime、package manager、bundler/test command 與 HTTP server；持久層使用 **`bun:sqlite`**。
 
 ```text
 query / URL / click context
@@ -35,7 +36,7 @@ query / URL / click context
 
 ## 官方 json-render Jev preview
 
-`experimental_composeSpec` / `experimental_createEvaluator` 目前仍未發佈到 npm。依官方 [Jev (Experimental)](https://json-render.dev/docs/jev) 指引，本 repo 使用 **source-built + pnpm pack** 的 `@json-render/core`，並固定到：
+`experimental_composeSpec` / `experimental_createEvaluator` 目前仍未發佈到 npm。依官方 [Jev (Experimental)](https://json-render.dev/docs/jev) 指引，本 repo 依 upstream 官方流程使用 **source-built + pnpm pack** 產生並 vendoring 的 `@json-render/core`，並固定到：
 
 - upstream: `vercel-labs/json-render`
 - commit: `3ad381881194e7011ad3ccd6d668033495a06c29`
@@ -43,7 +44,7 @@ query / URL / click context
 - vendored archive: `vendor/json-render-core-3ad38188.tgz`
 - SHA256: `0b002467614c0ade41e18ef6b15c116e9cf41fbe44cd49c6d93a49fe5adf73e6`
 
-`vendor/json-render-core-3ad38188.json` 保存 provenance。`npm run verify:json-render` 會驗證 archive checksum，並確認安裝後確實 export 兩個官方 experimental API。renderer 仍固定 `@json-render/react@0.21.0`，與該 checkout package version 相同。
+`vendor/json-render-core-3ad38188.json` 保存 provenance。`bun run verify:json-render` 會驗證 archive checksum，並確認安裝後確實 export 兩個官方 experimental API。renderer 仍固定 `@json-render/react@0.21.0`，與該 checkout package version 相同。
 
 不要把 `@json-render/core` 改回 npm `0.21.0`：npm 發佈版目前沒有這兩個 experimental exports。
 
@@ -110,15 +111,15 @@ Reload／重訪同一 observation 不會重新呼叫 generator 或 Jev。`WORLD_
 
 ## 本機啟動
 
-需要 **Node.js 24+**。
+需要 **Bun 1.4.2+**。
 
 ```bash
 git clone https://github.com/knowlet/jev-agentworld-web-simulator.git
 cd jev-agentworld-web-simulator
-npm ci
+bun install
 cp .env.example .env
-npm run build
-npm start
+bun run build
+bun run start
 ```
 
 開啟 `http://127.0.0.1:3000`。
@@ -166,7 +167,7 @@ REQUEST_TIMEOUT_MS=120000
 - 官方 json-render Jev composer 選 component membership、root、grouping、placement、order。
 - 五種 Surface layout：article / docs / forum / product / home。
 - 四組 palette。
-- SQLite 世界持久化、同站品牌／palette、來源摘要與 anchor context。
+- `bun:sqlite` 世界持久化、同站品牌／palette、來源摘要與 anchor context。
 - 同一 observation request deduplication。
 - browser back / forward / reload。
 - mock/live 明確標示。
@@ -176,18 +177,18 @@ REQUEST_TIMEOUT_MS=120000
 ## 測試
 
 ```bash
-npm run verify:json-render
-npm run typecheck
-npm run build
-npm test
-npx playwright install chromium
-npm run test:e2e
+bun run verify:json-render
+bun run typecheck
+bun run build
+bun test tests/*.test.ts
+bunx playwright install chromium
+bun run test:e2e
 ```
 
 真實 API：
 
 ```bash
-npm run test:live
+bun run test:live
 ```
 
 ### Offline CI
@@ -199,7 +200,7 @@ npm run test:live
 - production build
 - provider / Gateway transport contract tests
 - official `experimental_composeSpec` candidate composition tests
-- SQLite persistence / dedup / retry behavior
+- bun:sqlite persistence / dedup / retry behavior
 - XSS-safe rendering
 - Chromium 搜尋 → 頁面 → link → back → reload
 
@@ -227,3 +228,16 @@ npm run test:live
 live smoke 會驗證：Gateway Jev world policy、OpenAI-compatible content generation、官方 json-render Jev select/layout composition、兩個連續頁面、cache 零新增 provider call，以及 Chromium 實際渲染。
 
 這仍是 integration smoke，不是 factuality、Jev confidence calibration 或長期 world-consistency benchmark。
+
+
+## Bun migration
+
+此 repo 的正常開發與 CI 不需要 Node/npm/pnpm：
+
+- runtime/server: `Bun.serve()`
+- package manager / lockfile: `bun install` + `bun.lock`
+- frontend build: `Bun.build()`
+- tests: `bun test`
+- SQLite: `bun:sqlite`
+
+唯一仍出現 pnpm 的地方，是 **json-render upstream preview archive 的 provenance**：官方 Jev 文件目前要求從其 monorepo checkout 後用 pnpm build/pack；本 repo 已把那個精確產物與 SHA256 vendoring，因此日常安裝不需要 pnpm。

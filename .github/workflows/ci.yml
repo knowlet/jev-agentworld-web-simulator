@@ -12,27 +12,27 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '24'
-      - name: Install locked dependencies
-        run: npm ci
+          bun-version: '1.4.2'
+      - name: Install dependencies and create/update Bun lockfile
+        run: bun install
       - name: Verify pinned official json-render Jev preview
-        run: npm run verify:json-render
+        run: bun run verify:json-render
       - name: Type check
-        run: npm run typecheck
-      - name: Build actual json-render UI
-        run: npm run build
-      - name: Unit and contract tests (no secrets)
+        run: bun run typecheck
+      - name: Build with Bun
+        run: bun run build
+      - name: Unit and contract tests on Bun + bun:sqlite
         run: |
           mkdir -p reports
           set -o pipefail
-          npm test 2>&1 | tee reports/unit.tap
+          bun test tests/*.test.ts 2>&1 | tee reports/unit.tap
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-      - name: Browser navigation tests (explicit mock mode)
-        run: npm run test:e2e
-      - name: Upload reports and reproducibility lock
+        run: bunx playwright install --with-deps chromium
+      - name: Browser navigation tests
+        run: bun run test:e2e
+      - name: Upload reports and Bun reproducibility lock
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -40,12 +40,12 @@ jobs:
           path: |
             reports/
             test-results/
-            package-lock.json
+            bun.lock
             vendor/json-render-core-3ad38188.json
           retention-days: 14
       - name: Summary
         if: always()
         run: |
-          echo '## Offline official-Jev validation' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Pinned source-built @json-render/core, official experimental composer/evaluator exports, TypeScript, production build, contract tests, SQLite persistence and Chromium navigation. No external model calls.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'See artifact for TAP, screenshots/report, lockfile and upstream provenance.' >> "$GITHUB_STEP_SUMMARY"
+          echo '## Offline official-Jev + Bun validation' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Bun 1.4.2 runtime/package manager/bundler, bun:sqlite, pinned source-built @json-render/core, official experimental composer/evaluator, TypeScript, contract tests and Chromium navigation.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No external model calls.' >> "$GITHUB_STEP_SUMMARY"

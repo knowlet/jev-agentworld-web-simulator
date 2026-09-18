@@ -1,4 +1,4 @@
-name: Live smoke (official json-render Jev + generator)
+name: Live smoke (official json-render Jev + Bun + generator)
 on:
   workflow_dispatch:
     inputs:
@@ -32,19 +32,19 @@ jobs:
       LIVE_QUERY: ${{ inputs.query }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '24'
-      - name: Require AI Gateway secret (never fall back to mocks)
+          bun-version: '1.4.2'
+      - name: Require AI Gateway secret
         run: |
           if [ -z "$AI_GATEWAY_API_KEY" ]; then echo 'Missing AI_GATEWAY_API_KEY (or JEV_AI_GATEWAY_API_KEY)'; exit 1; fi
-      - name: Install locked dependencies
-        run: npm ci
-      - run: npm run verify:json-render
-      - run: npm run build
-      - run: npx playwright install --with-deps chromium
-      - name: Exercise Gateway Jev, official composer, generator and Chromium
-        run: npm run test:live
+      - name: Install dependencies
+        run: bun install
+      - run: bun run verify:json-render
+      - run: bun run build
+      - run: bunx playwright install --with-deps chromium
+      - name: Exercise Gateway Jev, official composer, OpenAI-compatible generator, Bun server and bun:sqlite
+        run: bun run test:live
       - name: Upload live observations, usage and screenshot
         if: always()
         uses: actions/upload-artifact@v4

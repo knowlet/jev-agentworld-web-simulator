@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { setTimeout as delay } from 'node:timers/promises';
 import {
   experimental_createEvaluator,
   type Experimental_CompositionEvaluator,
@@ -89,7 +88,7 @@ export class Providers {
         if (!res.ok) {
           await res.body?.cancel();
           if (attempt === 1 && [429, 502, 503, 504, 529].includes(res.status)) {
-            await delay(500, undefined, { signal }); continue;
+            await Bun.sleep(500); signal.throwIfAborted(); continue;
           }
           throw new ProviderError(provider, `HTTP ${res.status}`);
         }

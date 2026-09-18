@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -193,7 +193,7 @@ test('simultaneous cache misses share generation; a failure remains retryable', 
   } finally { store.close(); }
 });
 test('HTTP API validates inputs, denies cross-origin calls and returns composed spec', async () => {
-  const { store, world } = harness(); const app = createApp(world); const base = await listen(app, 0);
+  const { store, world } = harness(); const running = listen(createApp(world), 0); const base = running.base;
   try {
     const post = (path: string, data: unknown, headers = {}) => fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(data) });
     assert.equal((await post('/api/page', { url: 'javascript:alert(1)' })).status, 400);
@@ -204,5 +204,5 @@ test('HTTP API validates inputs, denies cross-origin calls and returns composed 
     const payload = await result.json(); assert.equal(payload.mode, 'mock'); assert(payload.spec.root); assert.equal(payload.composition.source, 'mock');
     const health = await fetch(base + '/api/health'); assert(health.headers.get('content-security-policy')?.includes("script-src 'self'"));
     assert.equal((await health.json()).upstreamConnectivity, 'not-probed');
-  } finally { await new Promise<void>(resolve => app.close(() => resolve())); store.close(); }
+  } finally { await running.stop(); store.close(); }
 });

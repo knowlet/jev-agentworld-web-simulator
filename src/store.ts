@@ -1,36 +1,46 @@
-import { DatabaseSync } from 'node:sqlite';
+import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { createHash } from 'node:crypto';
 
 export class Store {
-  private db: DatabaseSync;
+  private db: Database;
+  private select;
+  private insert;
+  private counts;
+
   constructor(path: string, readonly namespace: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    this.db = new DatabaseSync(path);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS records (
-        namespace TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL,
-        data TEXT NOT NULL, created_at INTEGER NOT NULL,
-        PRIMARY KEY(namespace,kind,key)
-      );`);
+    this.db = new Database(path, { create: true, strict: true });
+    this.db.run('PRAGMA journal_mode=WAL');
+    this.db.run('PRAGMA busy_timeout=5000');
+    this.db.run(`CREATE TABLE IF NOT EXISTS records (
+      namespace TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL,
+      data TEXT NOT NULL, created_at INTEGER NOT NULL,
+      PRIMARY KEY(namespace,kind,key)
+    )`);
+    this.select = this.db.query('SELECT data FROM records WHERE namespace=? AND kind=? AND key=?');
+    this.insert = this.db.query('INSERT OR IGNORE INTO records VALUES (?,?,?,?,?)');
+    this.counts = this.db.query('SELECT kind, COUNT(*) AS n FROM records WHERE namespace=? GROUP BY kind');
   }
+
   get<T>(kind: string, key: string): T | undefined {
-    const row = this.db.prepare('SELECT data FROM records WHERE namespace=? AND kind=? AND key=?')
-      .get(this.namespace, kind, key) as { data: string } | undefined;
+    const row = this.select.get(this.namespace, kind, key) as { data: string } | null;
     return row ? JSON.parse(row.data) as T : undefined;
   }
+
   put<T>(kind: string, key: string, data: T): T {
-    // First committed observation wins, including across processes/restarts.
-    this.db.prepare('INSERT OR IGNORE INTO records VALUES (?,?,?,?,?)')
-      .run(this.namespace, kind, key, JSON.stringify(data), Date.now());
+    this.insert.run(this.namespace, kind, key, JSON.stringify(data), Date.now());
     return this.get<T>(kind, key)!;
   }
+
   stats(): Record<string, number> {
-    const rows = this.db.prepare('SELECT kind, COUNT(*) AS n FROM records WHERE namespace=? GROUP BY kind')
-      .all(this.namespace) as { kind: string; n: number }[];
-    return Object.fromEntries(rows.map(r => [r.kind, r.n]));
+    const rows = this.counts.all(this.namespace) as { kind: string; n: number }[];
+    return Object.fromEntries(rows.map(r => [r.kind, Number(r.n)]));
   }
+
   close() { this.db.close(); }
 }
-export function key(s: string) { return createHash('sha256').update(s).digest('hex'); }
+
+export function key(s: string) {
+  return new Bun.CryptoHasher('sha256').update(s).digest('hex');
+}
