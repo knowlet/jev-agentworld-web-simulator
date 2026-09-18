@@ -1,9 +1,9 @@
-name: Live smoke (official json-render Jev + Bun + generator)
+name: Live smoke (official json-render composer + direct TypeSafe Jev + Bun)
 on:
   workflow_dispatch:
     inputs:
       query:
-        description: Fictional search scenario (sent to the generator and Jev decisions)
+        description: Fictional search scenario (sent to generator and Jev decisions)
         default: deep sea exploration
         required: true
         type: string
@@ -15,8 +15,9 @@ jobs:
     timeout-minutes: 15
     env:
       APP_MODE: live
-      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY || secrets.JEV_AI_GATEWAY_API_KEY }}
-      JEV_MODEL: ${{ vars.JEV_MODEL || 'typesafe-ai/jev' }}
+      JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.TYPESAFE_API_KEY }}
+      JEV_BASE_URL: ${{ vars.JEV_BASE_URL || 'https://api.typesafe.ai/v1' }}
+      JEV_MODEL: ${{ vars.JEV_MODEL || 'jev-latest' }}
       JEV_EVALUATION_TIMEOUT_MS: ${{ vars.JEV_EVALUATION_TIMEOUT_MS || '10000' }}
       JEV_COMPOSE_TIMEOUT_MS: ${{ vars.JEV_COMPOSE_TIMEOUT_MS || '45000' }}
       JEV_COMPOSE_MAX_STEPS: ${{ vars.JEV_COMPOSE_MAX_STEPS || '4' }}
@@ -35,15 +36,15 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
-      - name: Require AI Gateway secret
+      - name: Require direct TypeSafe Jev secret
         run: |
-          if [ -z "$AI_GATEWAY_API_KEY" ]; then echo 'Missing AI_GATEWAY_API_KEY (or JEV_AI_GATEWAY_API_KEY)'; exit 1; fi
+          if [ -z "$JEV_API_KEY" ]; then echo 'Missing JEV_API_KEY (or TYPESAFE_API_KEY)'; exit 1; fi
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
       - run: bun run verify:json-render
       - run: bun run build
       - run: bunx playwright install --with-deps chromium
-      - name: Exercise Gateway Jev, official composer, OpenAI-compatible generator, Bun server and bun:sqlite
+      - name: Exercise direct TypeSafe Jev, official composer, generator, Bun server and bun:sqlite
         run: bun run test:live
       - name: Upload live observations, usage and screenshot
         if: always()

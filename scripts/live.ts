@@ -17,7 +17,7 @@ let running: ReturnType<typeof listen> | undefined;
 let providers: Providers | undefined;
 try {
   const config = loadConfig({ ...process.env, APP_MODE: 'live' });
-  report.models = { jevGateway: config.jevModel, generator: config.model, jsonMode: config.jsonMode };
+  report.models = { jevDirect: config.jevModel, jevBase: config.jevBase, generator: config.model, jsonMode: config.jsonMode };
   store = new Store(':memory:', namespace(config) + '-smoke');
   providers = new Providers(config);
   const world = new World(store, providers);
@@ -32,9 +32,9 @@ try {
     return result;
   };
   const search = await request('/api/search', { query: process.env.LIVE_QUERY || 'deep sea exploration' });
-  checks.push('Gateway Jev search intent + generator + official json-render Jev composition');
+  checks.push('Direct TypeSafe Jev search intent + generator + official json-render Jev composition');
   const first = await request('/api/page', { url: search.data.results[0].url, ctx: search.data.results[0].title });
-  checks.push('Gateway Jev page policy + generator + official json-render Jev composition');
+  checks.push('Direct TypeSafe Jev page policy + generator + official json-render Jev composition');
   const next = first.data.links[0];
   const second = await request('/api/page', { url: next.url, from: first.data.url, ctx: next.label });
   assert.notEqual(second.data.url, first.data.url);
@@ -45,7 +45,7 @@ try {
   assert.equal(providers.calls.length, callsBefore);
   checks.push('Revisit is stable and performs zero additional provider/evaluator calls');
   assert.equal(providers.calls.filter(c => c.provider === 'openai').length, 3);
-  assert(providers.calls.filter(c => c.provider === 'jev-gateway').length >= 6);
+  assert(providers.calls.filter(c => c.provider === 'jev').length >= 6);
   report.observations = { search, first, second, fictional: true };
   const browser = await chromium.launch();
   try {

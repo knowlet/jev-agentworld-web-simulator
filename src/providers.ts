@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  experimental_createEvaluator,
+  type Experimental_CompositionEvaluation,
   type Experimental_CompositionEvaluator,
   type Experimental_ChoiceQuestion,
 } from '@json-render/core';
@@ -51,34 +51,77 @@ function mockEvaluate(): Experimental_CompositionEvaluator {
   };
 }
 
+const probability = z.number().min(0).max(1);
+const systemOneResponse = z.object({
+  answers: z.record(z.string(), z.object({
+    type: z.literal('choice'),
+    choice: z.string(),
+    confidence: probability,
+    probabilities: z.record(z.string(), probability),
+  })),
+}).passthrough();
+
 export class Providers {
   readonly calls: Usage[] = [];
   private readonly evaluator: Experimental_CompositionEvaluator;
+
   constructor(readonly config: Config, readonly fetcher: Fetcher = fetch) {
-    if (config.mode === 'mock') this.evaluator = mockEvaluate();
-    else {
-      const official = experimental_createEvaluator({
-        model: config.jevModel,
-        apiKey: config.gatewayKey,
-        timeoutMs: config.jevEvalTimeout,
-        fetch: fetcher as typeof fetch,
+    this.evaluator = config.mode === 'mock' ? mockEvaluate() : request => this.evaluateTypeSafe(request);
+  }
+
+  compositionEvaluator(): Experimental_CompositionEvaluator { return this.evaluator; }
+
+  private async evaluateTypeSafe(request: Parameters<Experimental_CompositionEvaluator>[0]): Promise<Experimental_CompositionEvaluation> {
+    const started = Date.now();
+    const controller = new AbortController();
+    const abort = () => controller.abort(request.signal.reason);
+    request.signal.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(() => controller.abort(new DOMException('Jev evaluation timed out', 'TimeoutError')), this.config.jevEvalTimeout);
+    try {
+      const res = await this.fetcher(`${this.config.jevBase}/systemone`, {
+        method: 'POST',
+        redirect: 'error',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.config.jevKey}`,
+        },
+        body: JSON.stringify({
+          model: this.config.jevModel,
+          state: request.state,
+          questions: request.questions,
+        }),
       });
-      this.evaluator = async request => {
-        const started = Date.now();
-        try {
-          const result = await official(request);
-          this.calls.push({ provider: 'jev-gateway', elapsedMs: Date.now() - started, attempts: 1,
-            usage: result.usage?.inputTokens == null ? undefined : { inputTokens: result.usage.inputTokens } });
-          if (this.calls.length > 1000) this.calls.shift();
-          return result;
-        } catch (e) {
-          const message = e instanceof Error ? e.message : 'evaluation failed';
-          throw new ProviderError('jev-gateway', message.slice(0, 180));
+      if (!res.ok) {
+        await res.body?.cancel();
+        throw new ProviderError('jev', `HTTP ${res.status}`);
+      }
+      const parsed = systemOneResponse.safeParse(await res.json().catch(() => null));
+      if (!parsed.success) throw new ProviderError('jev', 'invalid System One response');
+      const answers: Experimental_CompositionEvaluation['answers'] = {};
+      for (const [name, question] of Object.entries(request.questions)) {
+        const answer = parsed.data.answers[name];
+        const options = Object.keys(question.criteria);
+        if (!answer || !options.includes(answer.choice)) throw new ProviderError('jev', 'out-of-catalog Choice response');
+        if (Object.keys(answer.probabilities).some(k => !options.includes(k)) ||
+            options.some(k => !(k in answer.probabilities)) ||
+            Math.abs(Object.values(answer.probabilities).reduce((a, b) => a + b, 0) - 1) > 0.02) {
+          throw new ProviderError('jev', 'incomplete Choice probabilities');
         }
-      };
+        answers[name] = { choice: answer.choice, confidence: answer.confidence };
+      }
+      this.calls.push({ provider: 'jev', elapsedMs: Date.now() - started, attempts: 1 });
+      if (this.calls.length > 1000) this.calls.shift();
+      return { answers };
+    } catch (e) {
+      if (e instanceof ProviderError) throw e;
+      throw new ProviderError('jev', controller.signal.aborted ? 'request timed out or aborted' : 'connection failed');
+    } finally {
+      clearTimeout(timer);
+      request.signal.removeEventListener('abort', abort);
     }
   }
-  compositionEvaluator(): Experimental_CompositionEvaluator { return this.evaluator; }
+
   async post(provider: string, url: string, key: string, body: unknown): Promise<unknown> {
     const start = Date.now(); const signal = AbortSignal.timeout(this.config.timeout);
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -117,16 +160,21 @@ export class Providers {
     }
     throw new ProviderError(provider, 'retry budget exhausted');
   }
+
   async choices(state: unknown, questions: Record<string, Experimental_ChoiceQuestion>) {
     try {
-      const result = await this.evaluator({ state: state as Record<string, unknown>, questions,
-        signal: AbortSignal.timeout(this.config.jevEvalTimeout + 1000) });
+      const result = await this.evaluator({
+        state: state as Record<string, unknown>,
+        questions,
+        signal: AbortSignal.timeout(this.config.jevEvalTimeout + 1000),
+      });
       return result.answers;
     } catch (e) {
       if (e instanceof ProviderError) throw e;
-      throw new ProviderError('jev-gateway', 'choice evaluation failed');
+      throw new ProviderError('jev', 'choice evaluation failed');
     }
   }
+
   async pagePolicy(context: Context): Promise<Policy> {
     if (this.config.mode === 'mock') return { layout: 'article', palette: 'blue', confidence: 1, source: 'mock' };
     const a = await this.choices(context, {
@@ -139,6 +187,7 @@ export class Providers {
     return { layout: z.enum(layouts).parse(a.layout?.choice), palette: z.enum(palettes).parse(a.palette?.choice),
       confidence: a.layout?.confidence ?? 0, source: 'jev' };
   }
+
   async searchPolicy(query: string) {
     if (this.config.mode === 'mock') return { intent: 'general', confidence: 1, source: 'mock' as const };
     const a = await this.choices({ query }, { intent: {
@@ -147,6 +196,7 @@ export class Providers {
     } });
     return { intent: z.enum(intents).parse(a.intent?.choice), confidence: a.intent?.confidence ?? 0, source: 'jev' as const };
   }
+
   async generate<T>(name: string, schema: z.ZodType<T>, state: unknown): Promise<T> {
     const c = this.config;
     const jsonSchema = z.toJSONSchema(schema, { target: 'draft-7' });
@@ -174,6 +224,7 @@ JSON schema: ${JSON.stringify(jsonSchema)}`;
     try { return schema.parse(JSON.parse(choice.message.content || '')); }
     catch { throw new ProviderError('openai', 'generated document failed schema validation; retry navigation'); }
   }
+
   page(context: Context, policy: Policy) { return this.generate('page', pageDraftSchema, { task: 'page', ...context, policy }); }
   search(query: string, intent: string) { return this.generate('search', searchSchema, { task: 'search', query, intent }); }
 }

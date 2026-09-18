@@ -47,5 +47,5 @@ jobs:
         if: always()
         run: |
           echo '## Offline official-Jev + Bun validation' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Bun 1.4.2 runtime/package manager/bundler, bun:sqlite, pinned source-built @json-render/core, official experimental composer/evaluator, TypeScript, contract tests and Chromium navigation.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Bun 1.4.2 runtime/package manager/bundler, bun:sqlite, pinned source-built @json-render/core, official experimental composer + direct TypeSafe evaluator contract, TypeScript, contract tests and Chromium navigation.' >> "$GITHUB_STEP_SUMMARY"
           echo 'No external model calls.' >> "$GITHUB_STEP_SUMMARY"

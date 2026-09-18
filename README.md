@@ -6,15 +6,15 @@
 
 - **OpenAI-compatible API**（預計 DeepSeek V4.1 Flash）只生成結構化搜尋／頁面內容。
 - **Jev** 負責 bounded decisions，包括 search intent、page policy，以及 UI composition。
-- **json-render 官方 experimental Jev integration** (`experimental_createEvaluator` + `experimental_composeSpec`) 直接把 app-owned component candidates 組成正式 `Spec`。
+- **json-render 官方 experimental composer** (`experimental_composeSpec`) 直接把 app-owned component candidates 組成正式 `Spec`；evaluator 改成 server-side TypeSafe `/systemone` adapter，不走 Vercel AI Gateway。
 - **React + @json-render/react** 只渲染 server 已驗證、已 cache 的 `Spec`。
 - **Bun 1.4.2** 負責 runtime、package manager、bundler/test command 與 HTTP server；持久層使用 **`bun:sqlite`**。
 
 ```text
 query / URL / click context
         │
-        ├─→ official experimental_createEvaluator (typesafe-ai/jev)
-        │        └─→ world policy: intent / page type / palette
+        ├─→ TypeSafe /v1/systemone (jev-latest)
+        │        └─→ world policy + json-render composition decisions
         │
         └─→ OpenAI-compatible generator
                  └─→ SearchDocument / PageDocument
@@ -36,7 +36,7 @@ query / URL / click context
 
 ## 官方 json-render Jev preview
 
-`experimental_composeSpec` / `experimental_createEvaluator` 目前仍未發佈到 npm。依官方 [Jev (Experimental)](https://json-render.dev/docs/jev) 指引，本 repo 依 upstream 官方流程使用 **source-built + pnpm pack** 產生並 vendoring 的 `@json-render/core`，並固定到：
+`experimental_composeSpec` 目前仍未發佈到 npm。依官方 [Jev (Experimental)](https://json-render.dev/docs/jev) 指引，本 repo 依 upstream 官方流程使用 **source-built + pnpm pack** 產生並 vendoring 的 `@json-render/core`，並固定到：
 
 - upstream: `vercel-labs/json-render`
 - commit: `3ad381881194e7011ad3ccd6d668033495a06c29`
@@ -44,7 +44,7 @@ query / URL / click context
 - vendored archive: `vendor/json-render-core-3ad38188.tgz`
 - SHA256: `0b002467614c0ade41e18ef6b15c116e9cf41fbe44cd49c6d93a49fe5adf73e6`
 
-`vendor/json-render-core-3ad38188.json` 保存 provenance。`bun run verify:json-render` 會驗證 archive checksum，並確認安裝後確實 export 兩個官方 experimental API。renderer 仍固定 `@json-render/react@0.21.0`，與該 checkout package version 相同。
+`vendor/json-render-core-3ad38188.json` 保存 provenance。`bun run verify:json-render` 會驗證 archive checksum，並確認安裝後確實 export 官方 `experimental_composeSpec` API。renderer 仍固定 `@json-render/react@0.21.0`，與該 checkout package version 相同。
 
 不要把 `@json-render/core` 改回 npm `0.21.0`：npm 發佈版目前沒有這兩個 experimental exports。
 
@@ -76,17 +76,18 @@ Link #1..N
 
 candidate 的 props 已經是具體資料；Jev **不能寫 prose、URL、CSS、JS 或任意 props**。它只決定 candidate membership、root、parent/slot 與 order。這正是 json-render 官方 Jev composer 的模型。
 
-### 2. Jev policy 也走官方 Gateway evaluator
+### 2. Jev evaluator 直接走 TypeSafe 官方 API
 
-已移除自行實作的 TypeSafe `/systemone` HTTP client。search intent 與 page policy 直接重用 `experimental_createEvaluator` 回傳的 Choice evaluator。
-
-官方 adapter 使用 Vercel AI Gateway v4 evaluation transport，預設 model ID：
+`experimental_composeSpec` 本身是 model-neutral：它只需要一個符合 `Experimental_CompositionEvaluator` 的 callback。這個 repo 不使用 json-render 內建的 Gateway adapter；server 直接呼叫：
 
 ```text
-typesafe-ai/jev
+POST https://api.typesafe.ai/v1/systemone
+Authorization: Bearer $JEV_API_KEY
 ```
 
-因此 live 模式需要 **`AI_GATEWAY_API_KEY`**，不需要另一把 TypeSafe API key。
+request 保持 TypeSafe 的原生 `state + Choice questions` contract，回傳的 choice / confidence / probabilities 經本地驗證後，再轉成 json-render composer 需要的 evaluator result。
+
+因此 live 模式只需要 **`JEV_API_KEY`**（或 `TYPESAFE_API_KEY`），不需要 `JEV_API_KEY`，也不經 Vercel AI Gateway。
 
 ### 3. Cache 保存內容 + UI tree
 
@@ -137,8 +138,9 @@ mock 模式不會做任何外部 model call；但 UI tree 仍走**同一個官�
 ```dotenv
 APP_MODE=live
 
-AI_GATEWAY_API_KEY=your_vercel_ai_gateway_key
-JEV_MODEL=typesafe-ai/jev
+JEV_API_KEY=your_typesafe_key
+JEV_BASE_URL=https://api.typesafe.ai/v1
+JEV_MODEL=jev-latest
 JEV_EVALUATION_TIMEOUT_MS=10000
 JEV_COMPOSE_TIMEOUT_MS=45000
 JEV_COMPOSE_MAX_STEPS=4
@@ -212,11 +214,11 @@ bun run test:live
 
 | 類型 | 名稱 | 用途 |
 |---|---|---|
-| Secret | `AI_GATEWAY_API_KEY` | Vercel AI Gateway；Jev official evaluator |
+| Secret | `JEV_API_KEY` | TypeSafe Jev API key；也接受 `TYPESAFE_API_KEY` |
 | Secret | `OPENAI_API_KEY` | generator API key |
 | Variable | `OPENAI_BASE_URL` | 例如 `https://api.deepseek.com/v1` |
 | Variable | `OPENAI_MODEL` | endpoint 真正的 DS4.1 Flash model ID |
-| Variable, optional | `JEV_MODEL` | 預設 `typesafe-ai/jev` |
+| Variable, optional | `JEV_BASE_URL` / `JEV_MODEL` | 預設 `https://api.typesafe.ai/v1` / `jev-latest` |
 | Variable, optional | `OPENAI_JSON_MODE` | 預設 `json_object` |
 | Variable, optional | `OPENAI_THINKING` | generic provider 建議 `omit`；DeepSeek 可用 `disabled` |
 | Variable, optional | `JEV_*_TIMEOUT_MS` / compose limits | 調整 evaluator/composer budget |
@@ -225,7 +227,7 @@ bun run test:live
 
 **Actions → Live smoke (official json-render Jev + generator) → Run workflow**
 
-live smoke 會驗證：Gateway Jev world policy、OpenAI-compatible content generation、官方 json-render Jev select/layout composition、兩個連續頁面、cache 零新增 provider call，以及 Chromium 實際渲染。
+live smoke 會驗證：Direct TypeSafe Jev world policy、OpenAI-compatible content generation、官方 json-render Jev select/layout composition、兩個連續頁面、cache 零新增 provider call，以及 Chromium 實際渲染。
 
 這仍是 integration smoke，不是 factuality、Jev confidence calibration 或長期 world-consistency benchmark。
 
