@@ -1,25 +1,116 @@
 # Jev AgentWorld Web Simulator
 
-一個隨著瀏覽動作生成、並記住既有頁面的**虛構網際網路**。目標與 [Han Xiao 的 Qwen-AgentWorld simulator](https://github.com/hanxiao/qwen-agentworld-35b-a3b-web-simulator) 相同：搜尋 → 開啟結果 → 點擊連結 → 持續探索 → 重訪同一個世界。
+一個隨瀏覽動作生成、並記住已探索頁面的**虛構網際網路**。目標與 [hanxiao/qwen-agentworld-35b-a3b-web-simulator](https://github.com/hanxiao/qwen-agentworld-35b-a3b-web-simulator) 相同：搜尋 → 開啟結果 → 點擊連結 → 持續探索 → 重訪同一個世界。
 
-技術改用 **Jev 決策 + OpenAI-compatible API 生成 + json-render 渲染**。不是搜尋引擎、爬蟲或可靠事實來源；模擬網址不會被實際抓取。
+本版技術路線是：
+
+- **OpenAI-compatible API**（預計 DeepSeek V4.1 Flash）只生成結構化搜尋／頁面內容。
+- **Jev** 負責 bounded decisions，包括 search intent、page policy，以及 UI composition。
+- **json-render 官方 experimental Jev integration** (`experimental_createEvaluator` + `experimental_composeSpec`) 直接把 app-owned component candidates 組成正式 `Spec`。
+- **React + @json-render/react** 只渲染 server 已驗證、已 cache 的 `Spec`。
 
 ```text
-搜尋字串 ─→ Jev 搜尋意圖 ─→ Generator SearchDocument ─┐
-URL / 來源 / 錨點 ─→ Jev 頁型與配色 ─→ PageDocument ─┤
-                                                     ↓
-                                Zod validation → SQLite world
-                                                     ↓
-                         deterministic compiler → json-render → React
-                                                     ↓
-                                  local link → 下一個模擬頁面
+query / URL / click context
+        │
+        ├─→ official experimental_createEvaluator (typesafe-ai/jev)
+        │        └─→ world policy: intent / page type / palette
+        │
+        └─→ OpenAI-compatible generator
+                 └─→ SearchDocument / PageDocument
+                              │
+                         Zod validation
+                              │
+                  atomic component candidates
+                              │
+                    experimental_composeSpec
+                              │
+                    validated json-render Spec
+                              │
+                   SQLite persistent world
+                              │
+                    @json-render/react UI
 ```
 
-第一版刻意不做 agent autoplay、購物車或複雜表單；先讓完整瀏覽循環可運作、可驗證。實際使用 `@json-render/core` / `@json-render/react`，不是自行渲染 JSON 後掛上套件名稱。
+這不是搜尋引擎、爬蟲或可靠事實來源；模擬 URL 不會被實際抓取。
+
+## 官方 json-render Jev preview
+
+`experimental_composeSpec` / `experimental_createEvaluator` 目前仍未發佈到 npm。依官方 [Jev (Experimental)](https://json-render.dev/docs/jev) 指引，本 repo 使用 **source-built + pnpm pack** 的 `@json-render/core`，並固定到：
+
+- upstream: `vercel-labs/json-render`
+- commit: `3ad381881194e7011ad3ccd6d668033495a06c29`
+- package version: `0.21.0`
+- vendored archive: `vendor/json-render-core-3ad38188.tgz`
+- SHA256: `0b002467614c0ade41e18ef6b15c116e9cf41fbe44cd49c6d93a49fe5adf73e6`
+
+`vendor/json-render-core-3ad38188.json` 保存 provenance。`npm run verify:json-render` 會驗證 archive checksum，並確認安裝後確實 export 兩個官方 experimental API。renderer 仍固定 `@json-render/react@0.21.0`，與該 checkout package version 相同。
+
+不要把 `@json-render/core` 改回 npm `0.21.0`：npm 發佈版目前沒有這兩個 experimental exports。
+
+## 架構重點
+
+### 1. 不再有 deterministic `compilePage()` / `compileSearch()`
+
+Generator 只寫資料，例如：
+
+```json
+{
+  "title": "Deep sea",
+  "summary": "...",
+  "sections": [...],
+  "links": [...]
+}
+```
+
+server 將資料轉成受 catalog 約束的 atomic candidates：
+
+```text
+Surface variants
+Header
+Section #1..N
+optional image placeholder
+Links container
+Link #1..N
+```
+
+candidate 的 props 已經是具體資料；Jev **不能寫 prose、URL、CSS、JS 或任意 props**。它只決定 candidate membership、root、parent/slot 與 order。這正是 json-render 官方 Jev composer 的模型。
+
+### 2. Jev policy 也走官方 Gateway evaluator
+
+已移除自行實作的 TypeSafe `/systemone` HTTP client。search intent 與 page policy 直接重用 `experimental_createEvaluator` 回傳的 Choice evaluator。
+
+官方 adapter 使用 Vercel AI Gateway v4 evaluation transport，預設 model ID：
+
+```text
+typesafe-ai/jev
+```
+
+因此 live 模式需要 **`AI_GATEWAY_API_KEY`**，不需要另一把 TypeSafe API key。
+
+### 3. Cache 保存內容 + UI tree
+
+一次成功 materialization 會一起保存：
+
+```text
+semantic document
+json-render Spec
+composition metadata
+```
+
+Reload／重訪同一 observation 不會重新呼叫 generator 或 Jev。`WORLD_EPOCH`、模型與 composition budget 都會進 namespace；換模型或 composer 設定不會污染舊世界。
+
+### 4. 安全邊界
+
+- Generator output 必須通過 Zod schema。
+- Jev 只看到 candidate descriptions / explicit context，不會自動收到 raw props/state。
+- candidate props 由 server 建立，navigation URL 只會編譯成 `/view?...` / `/search?...`。
+- catalog 不允許 generated script 或 arbitrary action handler。
+- composed spec 會再經 catalog validation 和最低語意 postcondition；失敗不寫 cache。
+- UI renderer 最後仍拒絕任意外部 `href`。
 
 ## 本機啟動
 
-需要 **Node.js 22.16+**、npm、瀏覽器。SQLite 使用 Node 內建 `node:sqlite`；Node 22 的 experimental warning 不代表啟動失敗。
+需要 **Node.js 24+**。
 
 ```bash
 git clone https://github.com/knowlet/jev-agentworld-web-simulator.git
@@ -30,128 +121,109 @@ npm run build
 npm start
 ```
 
-開啟 **http://127.0.0.1:3000**。範例 `.env` 明確設為 `APP_MODE=mock`，可以不放金鑰先檢查 UI。右上角會顯示 **MOCK · NO MODEL CALLS**；這些固定測試內容不是 Jev 或 LLM 的輸出。
+開啟 `http://127.0.0.1:3000`。
 
-程式在沒有設定覆寫時預設 `live`；缺少 Jev 金鑰會失敗，**不會偷偷 fallback 到 mock**。
+`.env.example` 預設：
 
-### 切換真實 API
+```dotenv
+APP_MODE=mock
+```
 
-修改 `.env`：
+mock 模式不會做任何外部 model call；但 UI tree 仍走**同一個官方 `experimental_composeSpec` 程式碼**，只是 evaluator 換成本地 deterministic fixture evaluator，供 CI 驗證 composer/candidate/renderer integration。
+
+## Live 設定
 
 ```dotenv
 APP_MODE=live
-JEV_API_KEY=your-typesafe-key
-JEV_MODEL=jev-latest
+
+AI_GATEWAY_API_KEY=your_vercel_ai_gateway_key
+JEV_MODEL=typesafe-ai/jev
+JEV_EVALUATION_TIMEOUT_MS=10000
+JEV_COMPOSE_TIMEOUT_MS=45000
+JEV_COMPOSE_MAX_STEPS=4
+JEV_COMPOSE_MAX_ELEMENTS=32
+JEV_COMPOSE_MAX_DEPTH=4
+
 OPENAI_BASE_URL=https://api.deepseek.com/v1
 OPENAI_MODEL=deepseek-flash
-OPENAI_API_KEY=your-generator-key
+OPENAI_API_KEY=your_generator_key
 OPENAI_JSON_MODE=json_object
 OPENAI_THINKING=disabled
+OPENAI_MAX_TOKENS=4096
+REQUEST_TIMEOUT_MS=120000
 ```
 
-`OPENAI_MODEL` 請填 endpoint 實際提供的 model ID。`deepseek-flash` 是預期 DeepSeek endpoint 的範例，**不保證任何特定帳號一定映射到 V4.1**。這個 repo 沒有硬編碼 DS4.1 專用 adapter。
+`OPENAI_MODEL=deepseek-flash` 只是預設示例；請填你 endpoint 真正提供的 DeepSeek V4.1 Flash model ID。本 repo 只依賴 OpenAI-compatible `/chat/completions`。
 
-`OPENAI_THINKING=disabled` 是 DeepSeek 擴充參數；使用其他相容服務時設定 `omit`，避免傳送不支援的欄位。`OPENAI_JSON_MODE` 可選 `json_object`、`json_schema`、`off`；`off` 只省略 provider 的 response_format，**仍保留本地 Zod 驗證**。不會自動切換模式。相容服務未必支援完整嚴格 schema，建議先用 `json_object`。
+`OPENAI_JSON_MODE` 支援 `json_object` / `json_schema` / `off`。所有模式最後都還會跑本地 Zod validation。
 
-`OPENAI_BASE_URL` 不要包含 `/chat/completions`；是否需要 `/v1` 取決於服務。本地免驗證 endpoint 可以不填 `OPENAI_API_KEY`。Jev 金鑰也接受 `TYPESAFE_API_KEY` 別名。
+## MVP 功能
 
-生成使用完整 JSON response，**第一版沒有 token streaming / progressive rendering**，會顯示載入狀態，失敗可 Retry。不沿用原專案的 Qwen assistant prefill、seed 或 reasoning 拼接。
+- 虛構搜尋結果與 related searches。
+- 直接輸入 URL。
+- 頁面內 link 持續 materialize 下一頁。
+- search intent / page type / palette 使用 Jev Choice。
+- 官方 json-render Jev composer 選 component membership、root、grouping、placement、order。
+- 五種 Surface layout：article / docs / forum / product / home。
+- 四組 palette。
+- SQLite 世界持久化、同站品牌／palette、來源摘要與 anchor context。
+- 同一 observation request deduplication。
+- browser back / forward / reload。
+- mock/live 明確標示。
 
-`npm run dev` 會先建置 UI，再監看後端程式。修改 UI 後需重新執行 `npm run build` 並刷新；沒有另外引入 HMR server。
+第一版刻意不做 agent autoplay、表單 mutation、購物車或 progressive spec streaming；先驗證完整 world loop 與官方 Jev composition。
 
-## MVP 已包含
-
-- 虛構搜尋結果、相關搜尋、直接輸入 URL、頁面內連結繼續生成。
-- Jev 搜尋意圖 Choice；每個新頁面以單一 Jev request 同時決定 layout / palette。
-- 五種受限版型：article、docs、forum、product、home；四組配色。
-- 語意文件經 Zod 驗證後，確定性編譯為 json-render spec。模型不能新增任意 component 或 handler。
-- SQLite 持久化、同站品牌／配色、來源頁摘要與連結文字上下文、重訪快取、同一請求生成去重。
-- 瀏覽器上一頁／下一頁／重新載入；mock/live 標示；本地導覽和圖片占位。
-
-**Cache 就是世界的持久化資料。** Reload 不會重新生成已存在的頁面。修改 `WORLD_EPOCH` 可開一個新世界而不刪除舊資料。模式、provider/model、schema/prompt 版本與 generation 設定也會隔離 namespace，因此 mock 資料不會混進 live。
-
-失敗不會寫入 cache；並行首次造訪以第一個成功保存的 observation 為準。同站首次頁面生成會序列化以建立穩定品牌。瀏覽器離線不會中止其他請求共用的生成工作，但 provider 呼叫有 timeout。
-
-## 測試與 GitHub Actions
+## 測試
 
 ```bash
+npm run verify:json-render
 npm run typecheck
 npm run build
 npm test
 npx playwright install chromium
 npm run test:e2e
-# 以下會呼叫真實 API；.env 必須填好 credentials：
+```
+
+真實 API：
+
+```bash
 npm run test:live
 ```
 
-`package-lock.json` 已納入版本控制，來自實際 CI 的 npm 安裝結果；CI 使用 `npm ci`。不以 mock 測試通過宣稱 real-provider 整合已通過。
+### Offline CI
 
-### Offline CI：不需要 secrets
+`CI (offline fixtures)` 在 push / PR / manual dispatch 執行：
 
-`CI (offline fixtures)` 在 push、PR 或手動觸發時執行：TypeScript、production build、27 個單元／契約測試，以及 2 個 Chromium 瀏覽測試。涵蓋 provider request/response contract、拒絕非法 URL、文字安全渲染、SQLite 跨重啟持久化、cache 隔離、並行失敗重試，以及搜尋 → 頁面 → 下一個連結 → 返回 → 刷新。
+- pinned source-built json-render archive + export verification
+- TypeScript
+- production build
+- provider / Gateway transport contract tests
+- official `experimental_composeSpec` candidate composition tests
+- SQLite persistence / dedup / retry behavior
+- XSS-safe rendering
+- Chromium 搜尋 → 頁面 → link → back → reload
 
-Artifact **`offline-validation-<run_id>`** 包含 `unit.tap`、Playwright HTML report、mock 首頁／搜尋／頁面截圖、失敗時的 traces，以及 lockfile。截圖以 `mock-` 命名，不當成 live model 品質證據。
+不使用 secrets、不呼叫外部模型。
 
-初次驗證記錄：[CI #2](https://github.com/knowlet/jev-agentworld-web-simulator/actions/runs/35391369860) 在 commit `b1dd6d7` 通過。最新版本請看對應 commit 的 Actions 狀態。
+### Live smoke
 
-### Live smoke：手動觸發、使用真實模型
+在 GitHub **Settings → Secrets and variables → Actions** 設定：
 
-在 **Settings → Secrets and variables → Actions** 設定：
-
-| 類型 | 名稱 | 值／用途 |
+| 類型 | 名稱 | 用途 |
 |---|---|---|
-| Secret | `JEV_API_KEY` | TypeSafe API key；也接受 `TYPESAFE_API_KEY` |
-| Secret | `OPENAI_API_KEY` | 生成模型 API key；託管 DeepSeek 需要 |
+| Secret | `AI_GATEWAY_API_KEY` | Vercel AI Gateway；Jev official evaluator |
+| Secret | `OPENAI_API_KEY` | generator API key |
 | Variable | `OPENAI_BASE_URL` | 例如 `https://api.deepseek.com/v1` |
-| Variable | `OPENAI_MODEL` | 服務實際提供的 model ID；預設 `deepseek-flash` |
-| Variable | `OPENAI_THINKING` | DeepSeek 可設 `disabled`；一般相容服務設 `omit` |
-| Variable，選填 | `OPENAI_JSON_MODE` | 預設 `json_object`；也可 `json_schema` / `off` |
-| Variable，選填 | `JEV_BASE_URL` / `JEV_MODEL` | 預設 `https://api.typesafe.ai/v1` / `jev-latest` |
-| Variable，選填 | `OPENAI_MAX_TOKENS` / `REQUEST_TIMEOUT_MS` | 預設 `4096` / `120000` |
+| Variable | `OPENAI_MODEL` | endpoint 真正的 DS4.1 Flash model ID |
+| Variable, optional | `JEV_MODEL` | 預設 `typesafe-ai/jev` |
+| Variable, optional | `OPENAI_JSON_MODE` | 預設 `json_object` |
+| Variable, optional | `OPENAI_THINKING` | generic provider 建議 `omit`；DeepSeek 可用 `disabled` |
+| Variable, optional | `JEV_*_TIMEOUT_MS` / compose limits | 調整 evaluator/composer budget |
 
-前往 **Actions → Live smoke (Jev + generator) → Run workflow**，選 `develop`。也能在本機執行 `npm run test:live`。這個 workflow **不會在 PR 自動消耗 API 額度**。
+然後：
 
-每次以全新世界驗證：真實 Jev 搜尋判斷、generator 搜尋文件、兩個互相連結的頁面、cache 重訪零新增呼叫，再用 Chromium 渲染 live page。
+**Actions → Live smoke (official json-render Jev + generator) → Run workflow**
 
-正常預算為 **3 次 Jev + 3 次 generator**。遇到 429/502/503/504/529 時，每個 HTTP request 最多再試一次；不會無限重試、偷偷換模型或自行進入 schema repair loop。認證錯誤不重試。
+live smoke 會驗證：Gateway Jev world policy、OpenAI-compatible content generation、官方 json-render Jev select/layout composition、兩個連續頁面、cache 零新增 provider call，以及 Chromium 實際渲染。
 
-Artifact **`live-validation-<run_id>`** 包含 `live.json`、`live.md`，成功渲染時另有 `live-page.png`。JSON 記錄虛構 observation、耗時、數字型 token usage；不保存 API key、Authorization header 或原始 upstream error body。失敗仍上傳已產生報告。
-
-**Live smoke 是整合測試，不是事實正確性、Jev confidence 校準或長期世界一致性的 benchmark。初版交付時尚未執行真實 provider 驗證。**
-
-## 安全與限制
-
-預設 bind loopback。這是**單人本機 MVP，沒有 authentication / tenant isolation**，不要直接公開到網際網路或共用網路。Credentials 只留後端，沒有瀏覽器金鑰儲存或 `/settings` API。
-
-Provider URL 是可信任管理者環境設定，不接受 client 覆寫；模擬網頁 URL 只是識別資料，永遠不拿去 fetch。Provider redirect 被拒絕；有 response/body 大小限制、timeout、bounded retry、並行數量限制、Origin/Host 檢查及 CSP，但這些不等於已可公開部署。
-
-模型內容以 React text escaping 渲染，不解讀 HTML / Markdown，不載入外部圖片、字体、CSS 或 script。實際連結只通往本站 `/view` 或 `/search`。元件名稱、結構與導航 handler 由程式控制。
-
-未實作：agent autoplay、任意表單互動、購物車／登入／付款狀態、Jev 搜尋 reranking、一致性 verifier、實體知識圖、progressive patches、真實圖片、像素級網站重現，以及跨 process generation lock。同站 profile 與 referrer summary 只提供有限一致性，不等於 native world model 的行為保證。
-
-`GET /api/health` 只回報本地狀態，明示 `upstreamConnectivity: not-probed`，不是模型連線成功證明。
-
-## API / 程式配置
-
-```text
-POST /api/search  {"query":"deep sea exploration"}
-POST /api/page    {"url":"https://atlas.test/ocean","from":"...","ctx":"..."}
-GET  /api/health
-
-src/domain.ts     語意 schema / URL 處理
-src/providers.ts  Jev / OpenAI-compatible HTTP adapter
-src/world.ts      決策、生成、持久化協調與去重
-src/store.ts      SQLite namespace store
-src/server.ts     HTTP API / static UI
-ui/catalog.ts     PageDocument → json-render spec
-ui/registry.tsx   可信任 React components
-scripts/live.ts   真實 provider smoke report
-```
-
-## References / License
-
-本專案借鑑 [qwen-agentworld-35b-a3b-web-simulator](https://github.com/hanxiao/qwen-agentworld-35b-a3b-web-simulator) 的瀏覽概念，是新的精簡實作，不移植其 HTML renderer 或 Qwen-specific 程式碼。
-
-API 契約：[TypeSafe HTTP API](https://docs.typesafe.ai/api)、[json-render catalog](https://json-render.dev/docs/catalog)、[React renderer](https://json-render.dev/docs/api/react)、[DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)。
-
-專案程式碼採 MIT；相依套件保留各自授權，json-render 為 Apache-2.0。
+這仍是 integration smoke，不是 factuality、Jev confidence calibration 或長期 world-consistency benchmark。
