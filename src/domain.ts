@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import type { Spec } from '@json-render/core';
 
-export const VERSION = 'page-v1';
+export const VERSION = 'page-v2-official-jev';
 export const layouts = ['article', 'docs', 'forum', 'product', 'home'] as const;
 export const palettes = ['neutral', 'blue', 'warm', 'dark'] as const;
 export const intents = ['research', 'howto', 'comparison', 'discussion', 'general'] as const;
@@ -29,10 +30,17 @@ export type Search = z.infer<typeof searchSchema>;
 export type Policy = z.infer<typeof policySchema>;
 export interface Site { name: string; palette: Policy['palette'] }
 export interface Context { url: string; from?: string; ctx?: string; previous?: string; site?: Site }
-export interface Result<T> { data: T; cached: boolean; mode: 'live' | 'mock'; generation: 'openai' | 'mock'; elapsedMs: number }
+export interface CompositionInfo {
+  source: 'json-render-jev' | 'mock';
+  stopReason: 'finish';
+  evaluations: number;
+  inputTokens: number | null;
+}
+export interface Result<T> {
+  data: T; spec: Spec; composition: CompositionInfo;
+  cached: boolean; mode: 'live' | 'mock'; generation: 'openai' | 'mock'; elapsedMs: number;
+}
 
-// These are world identifiers, never fetch targets. No scheme-relative, credentials,
-// executable schemes, control characters, or ambiguous single-label destinations.
 export function canonicalUrl(raw: string, base?: string): string {
   if (!raw || raw.length > 2048 || /[\u0000-\u0020\u007f\\]/.test(raw)) throw new Error('Invalid simulated URL');
   const value = base ? raw : (/^[a-z][a-z\d+.-]*:/i.test(raw) ? raw : `https://${raw}`);
@@ -49,7 +57,6 @@ export function normalizePage(draft: PageDraft, url: string, policy: Policy, sit
     if (l.url === url || seen.has(l.url)) return false;
     seen.add(l.url); return true;
   });
-  // Never persist an unusable/dead-end page. Reload can retry a failed generation.
   return pageSchema.parse({ ...draft, siteName: site?.name ?? draft.siteName, url, links,
     policy: { ...policy, palette: site?.palette ?? policy.palette } });
 }
