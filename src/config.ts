@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { VERSION } from './domain';
+
 export interface Config {
   mode: 'live' | 'mock'; host: string; port: number; db: string; epoch: string;
-  jevBase: string; jevModel: string; jevKey: string;
+  gatewayKey: string; jevModel: string; jevEvalTimeout: number;
+  composeTimeout: number; composeMaxSteps: number; composeMaxElements: number; composeMaxDepth: number;
   base: string; model: string; key: string;
   jsonMode: 'json_object' | 'json_schema' | 'off'; thinking: 'omit' | 'disabled' | 'enabled';
   maxTokens: number; timeout: number;
@@ -25,9 +27,14 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
   const mode = enumValue(e.APP_MODE || 'live', ['live', 'mock']);
   const c: Config = {
     mode, host: e.HOST || '127.0.0.1', port: integer(e.PORT || '3000', 0, 65535),
-    db: e.WORLD_DB || 'data/world.sqlite', epoch: e.WORLD_EPOCH || 'mvp-1',
-    jevBase: endpoint(e.JEV_BASE_URL || 'https://api.typesafe.ai/v1'), jevModel: e.JEV_MODEL || 'jev-latest',
-    jevKey: e.JEV_API_KEY || e.TYPESAFE_API_KEY || '',
+    db: e.WORLD_DB || 'data/world.sqlite', epoch: e.WORLD_EPOCH || 'official-jev-1',
+    gatewayKey: e.AI_GATEWAY_API_KEY || e.JEV_AI_GATEWAY_API_KEY || '',
+    jevModel: e.JEV_MODEL || 'typesafe-ai/jev',
+    jevEvalTimeout: integer(e.JEV_EVALUATION_TIMEOUT_MS || '10000', 100, 120000),
+    composeTimeout: integer(e.JEV_COMPOSE_TIMEOUT_MS || '45000', 500, 180000),
+    composeMaxSteps: integer(e.JEV_COMPOSE_MAX_STEPS || '4', 1, 32),
+    composeMaxElements: integer(e.JEV_COMPOSE_MAX_ELEMENTS || '32', 3, 64),
+    composeMaxDepth: integer(e.JEV_COMPOSE_MAX_DEPTH || '4', 2, 8),
     base: endpoint(e.OPENAI_BASE_URL || 'https://api.deepseek.com/v1'), model: e.OPENAI_MODEL || 'deepseek-flash',
     key: e.OPENAI_API_KEY || '',
     jsonMode: enumValue(e.OPENAI_JSON_MODE || 'json_object', ['json_object', 'json_schema', 'off']),
@@ -35,12 +42,13 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
     maxTokens: integer(e.OPENAI_MAX_TOKENS || '4096', 512, 32768),
     timeout: integer(e.REQUEST_TIMEOUT_MS || '120000', 50, 300000),
   };
-  if (mode === 'live' && !c.jevKey) throw new Error('Live mode requires JEV_API_KEY (or TYPESAFE_API_KEY)');
+  if (mode === 'live' && !c.gatewayKey) throw new Error('Live mode requires AI_GATEWAY_API_KEY (or JEV_AI_GATEWAY_API_KEY)');
   return c;
 }
 export function namespace(c: Config): string {
-  // Separate fixture worlds, model/prompt versions and provider configuration.
-  // Credentials never enter the cache, UI, or diagnostics.
+  // Credentials never enter the cache key or diagnostics. Composition settings do,
+  // because the cached spec is part of the persistent simulated world observation.
   return createHash('sha256').update(JSON.stringify([VERSION, c.epoch, c.mode, c.base, c.model,
-    c.jevBase, c.jevModel, c.jsonMode, c.thinking, c.maxTokens])).digest('hex').slice(0, 24);
+    c.jevModel, c.jsonMode, c.thinking, c.maxTokens, c.composeMaxSteps, c.composeMaxElements, c.composeMaxDepth]))
+    .digest('hex').slice(0, 24);
 }
