@@ -1,0 +1,9 @@
+{
+  "package": "@json-render/core",
+  "packageVersion": "0.21.0",
+  "upstreamRepository": "https://github.com/vercel-labs/json-render",
+  "upstreamCommit": "3ad381881194e7011ad3ccd6d668033495a06c29",
+  "sha256": "0b002467614c0ade41e18ef6b15c116e9cf41fbe44cd49c6d93a49fe5adf73e6",
+  "builtBy": "pnpm --filter @json-render/core build && pnpm --filter @json-render/core pack",
+  "reason": "Official experimental Jev APIs are not yet published to npm; see https://json-render.dev/docs/jev"
+}
