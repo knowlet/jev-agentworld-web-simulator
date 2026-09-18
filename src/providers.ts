@@ -13,6 +13,7 @@ export class ProviderError extends Error {
   }
 }
 export interface Usage { provider: string; elapsedMs: number; attempts: number; usage?: unknown }
+export type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 function mockEvaluate(): Experimental_CompositionEvaluator {
   return async ({ state, questions }) => {
@@ -53,14 +54,14 @@ function mockEvaluate(): Experimental_CompositionEvaluator {
 export class Providers {
   readonly calls: Usage[] = [];
   private readonly evaluator: Experimental_CompositionEvaluator;
-  constructor(readonly config: Config, readonly fetcher: typeof fetch = fetch) {
+  constructor(readonly config: Config, readonly fetcher: Fetcher = fetch) {
     if (config.mode === 'mock') this.evaluator = mockEvaluate();
     else {
       const official = experimental_createEvaluator({
         model: config.jevModel,
         apiKey: config.gatewayKey,
         timeoutMs: config.jevEvalTimeout,
-        fetch: fetcher,
+        fetch: fetcher as typeof fetch,
       });
       this.evaluator = async request => {
         const started = Date.now();
