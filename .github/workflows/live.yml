@@ -1,9 +1,9 @@
-name: Live smoke (Jev + generator)
+name: Live smoke (official json-render Jev + generator)
 on:
   workflow_dispatch:
     inputs:
       query:
-        description: Fictional search scenario (sent to both providers)
+        description: Fictional search scenario (sent to the generator and Jev decisions)
         default: deep sea exploration
         required: true
         type: string
@@ -15,9 +15,13 @@ jobs:
     timeout-minutes: 15
     env:
       APP_MODE: live
-      JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.TYPESAFE_API_KEY }}
-      JEV_BASE_URL: ${{ vars.JEV_BASE_URL || 'https://api.typesafe.ai/v1' }}
-      JEV_MODEL: ${{ vars.JEV_MODEL || 'jev-latest' }}
+      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY || secrets.JEV_AI_GATEWAY_API_KEY }}
+      JEV_MODEL: ${{ vars.JEV_MODEL || 'typesafe-ai/jev' }}
+      JEV_EVALUATION_TIMEOUT_MS: ${{ vars.JEV_EVALUATION_TIMEOUT_MS || '10000' }}
+      JEV_COMPOSE_TIMEOUT_MS: ${{ vars.JEV_COMPOSE_TIMEOUT_MS || '45000' }}
+      JEV_COMPOSE_MAX_STEPS: ${{ vars.JEV_COMPOSE_MAX_STEPS || '4' }}
+      JEV_COMPOSE_MAX_ELEMENTS: ${{ vars.JEV_COMPOSE_MAX_ELEMENTS || '32' }}
+      JEV_COMPOSE_MAX_DEPTH: ${{ vars.JEV_COMPOSE_MAX_DEPTH || '4' }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://api.deepseek.com/v1' }}
       OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'deepseek-flash' }}
@@ -30,15 +34,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - name: Require Jev secret (never fall back to mocks)
+          node-version: '24'
+      - name: Require AI Gateway secret (never fall back to mocks)
         run: |
-          if [ -z "$JEV_API_KEY" ]; then echo 'Missing JEV_API_KEY or TYPESAFE_API_KEY'; exit 1; fi
+          if [ -z "$AI_GATEWAY_API_KEY" ]; then echo 'Missing AI_GATEWAY_API_KEY (or JEV_AI_GATEWAY_API_KEY)'; exit 1; fi
       - name: Install locked dependencies
         run: npm ci
+      - run: npm run verify:json-render
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - name: Exercise both live providers and Chromium
+      - name: Exercise Gateway Jev, official composer, generator and Chromium
         run: npm run test:live
       - name: Upload live observations, usage and screenshot
         if: always()
