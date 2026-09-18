@@ -1,5 +1,5 @@
 name: Migration validation
-# rerun: link placement fix
+# rerun: semantic parent fixture fix
 on:
   push:
     paths:
