@@ -26,15 +26,30 @@ function harness() {
   const providers = new Providers(c, async () => { throw new Error('Network forbidden in fixture mode'); });
   return { store, providers, world: new World(store, providers) };
 }
-function choose(questions: Record<string, { criteria: Record<string, unknown> }>) {
+function choose(questions: Record<string, { criteria: Record<string, unknown> }>, state: any = {}) {
   const answers: Record<string, { type: 'choice'; choice: string }> = {};
   const confidence: Record<string, number> = {};
+  const selected = Array.isArray(state.selected_elements) ? state.selected_elements : [];
+  const byId = new Map(selected.map((item: any) => [item.id, item]));
   for (const [name, q] of Object.entries(questions)) {
     const keys = Object.keys(q.criteria); let choice = keys[0]!;
     if (name === 'root') choice = keys.find(k => k !== 'unavailable') ?? choice;
     else if (name.startsWith('select_')) choice = keys.find(k => k.startsWith('use:')) ?? (keys.includes('1') ? '1' : choice);
-    else if (name.startsWith('parent_')) choice = keys.find(k => k.startsWith('node_0:')) ?? choice;
-    else if (name.startsWith('order_')) choice = keys.includes('1') ? '1' : choice;
+    else if (name.startsWith('parent_')) {
+      const child: any = byId.get(name.slice('parent_'.length));
+      const text = String(child?.content || '').toLowerCase();
+      if (child?.type === 'Link') {
+        const wanted = text.includes('related search') ? 'related'
+          : text.includes('outgoing navigation') ? 'outgoing'
+          : 'search result';
+        choice = Object.entries(q.criteria).find(([key, description]) => {
+          const parent: any = byId.get(key.split(':', 1)[0]);
+          return parent?.type === 'Links' && String(description).toLowerCase().includes(wanted);
+        })?.[0] ?? choice;
+      } else {
+        choice = keys.find(key => (byId.get(key.split(':', 1)[0]) as any)?.type === 'Surface') ?? choice;
+      }
+    } else if (name.startsWith('order_')) choice = keys.includes('1') ? '1' : choice;
     answers[name] = { type: 'choice', choice }; confidence[name] = 1;
   }
   return { answers, providerMetadata: { typesafe: { confidence } }, usage: { inputTokens: 7 } };
@@ -112,7 +127,7 @@ test('official experimental_createEvaluator uses Gateway v4 evaluation transport
     assert.equal(headers['ai-model-id'], 'typesafe-ai/jev');
     assert.equal(headers['ai-evaluation-model-specification-version'], '4');
     assert.equal(body.questions.layout.type, 'choice');
-    return Response.json(choose(body.questions));
+    return Response.json(choose(body.questions, body.state));
   });
   assert.equal((await p.pagePolicy({ url: 'https://a.org/' })).source, 'jev');
   assert.equal(p.calls.filter(c => c.provider === 'jev-gateway').length, 1);
@@ -123,7 +138,7 @@ test('official evaluator rejects out-of-catalog decisions instead of fallback', 
 });
 test('official experimental_composeSpec performs bounded select/layout evaluations', async () => {
   const p = liveProvider((url, body) => {
-    if (url.includes('ai-gateway')) return Response.json(choose(body.questions));
+    if (url.includes('ai-gateway')) return Response.json(choose(body.questions, body.state));
     throw new Error('unexpected provider');
   });
   const page = normalizePage(fixture, 'https://a.org/', policy);
@@ -165,7 +180,7 @@ test('generator overload retry is bounded to one additional attempt', async () =
 });
 test('simultaneous cache misses share generation; a failure remains retryable', async () => {
   let generations = 0; let fail = true;
-  const p = liveProvider((url, body) => url.includes('ai-gateway') ? Response.json(choose(body.questions)) : (() => { throw new Error('unexpected network'); })());
+  const p = liveProvider((url, body) => url.includes('ai-gateway') ? Response.json(choose(body.questions, body.state)) : (() => { throw new Error('unexpected network'); })());
   p.pagePolicy = async () => policy;
   p.page = async () => { generations++; await new Promise(r => setTimeout(r, 10)); if (fail) throw new Error('fixture failure'); return fixture; };
   const store = new Store(':memory:', 'dedup'); const world = new World(store, p);
