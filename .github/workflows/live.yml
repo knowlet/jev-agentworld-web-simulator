@@ -1,0 +1,55 @@
+name: Live smoke (Jev + generator)
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: Fictional search scenario (sent to both providers)
+        default: deep sea exploration
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_MODE: live
+      JEV_API_KEY: ${{ secrets.JEV_API_KEY || secrets.TYPESAFE_API_KEY }}
+      JEV_BASE_URL: ${{ vars.JEV_BASE_URL || 'https://api.typesafe.ai/v1' }}
+      JEV_MODEL: ${{ vars.JEV_MODEL || 'jev-latest' }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://api.deepseek.com/v1' }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'deepseek-flash' }}
+      OPENAI_JSON_MODE: ${{ vars.OPENAI_JSON_MODE || 'json_object' }}
+      OPENAI_THINKING: ${{ vars.OPENAI_THINKING || 'omit' }}
+      OPENAI_MAX_TOKENS: ${{ vars.OPENAI_MAX_TOKENS || '4096' }}
+      REQUEST_TIMEOUT_MS: ${{ vars.REQUEST_TIMEOUT_MS || '120000' }}
+      LIVE_QUERY: ${{ inputs.query }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require Jev secret (never fall back to mocks)
+        run: |
+          if [ -z "$JEV_API_KEY" ]; then echo 'Missing JEV_API_KEY or TYPESAFE_API_KEY'; exit 1; fi
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Exercise both live providers and Chromium
+        run: npm run test:live
+      - name: Upload live observations, usage and screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-validation-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f reports/live.md ]; then cat reports/live.md >> "$GITHUB_STEP_SUMMARY"; else echo 'Live smoke did not reach the test. Check setup steps.' >> "$GITHUB_STEP_SUMMARY"; fi

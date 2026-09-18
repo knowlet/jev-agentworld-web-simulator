@@ -1,0 +1,48 @@
+name: CI (offline fixtures)
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Type check
+        run: npm run typecheck
+      - name: Build actual json-render UI
+        run: npm run build
+      - name: Unit and contract tests (no secrets)
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          npm test 2>&1 | tee reports/unit.tap
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Browser navigation tests (explicit mock mode)
+        run: npm run test:e2e
+      - name: Upload reports and reproducibility lock
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-validation-${{ github.run_id }}
+          path: |
+            reports/
+            test-results/
+            package-lock.json
+          retention-days: 14
+      - name: Summary
+        if: always()
+        run: |
+          echo '## Offline fixture validation' >> "$GITHUB_STEP_SUMMARY"
+          echo 'TypeScript, production build, provider contract tests, SQLite persistence, XSS escaping and Chromium navigation. No real model calls.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'See job steps for pass/fail and the offline-validation artifact for reports/screenshots.' >> "$GITHUB_STEP_SUMMARY"
