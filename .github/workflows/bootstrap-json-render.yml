@@ -1,0 +1,42 @@
+name: Bootstrap pinned json-render Jev core
+on:
+  push:
+    paths:
+      - .github/workflows/bootstrap-json-render.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.1.3'
+      - name: Build pinned upstream core package
+        env:
+          JSON_RENDER_SHA: 3ad381881194e7011ad3ccd6d668033495a06c29
+        run: |
+          set -euo pipefail
+          git init /tmp/json-render
+          git -C /tmp/json-render remote add origin https://github.com/vercel-labs/json-render.git
+          git -C /tmp/json-render fetch --depth=1 origin "$JSON_RENDER_SHA"
+          git -C /tmp/json-render checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/json-render rev-parse HEAD)" = "$JSON_RENDER_SHA"
+          cd /tmp/json-render
+          pnpm install --frozen-lockfile
+          pnpm --filter @json-render/core build
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          pnpm --filter @json-render/core pack --pack-destination "$GITHUB_WORKSPACE/out"
+          cd "$GITHUB_WORKSPACE/out"
+          sha256sum *.tgz > SHA256SUMS
+          printf '%s\n' "$JSON_RENDER_SHA" > UPSTREAM_COMMIT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: json-render-jev-core-3ad38188
+          path: out/
+          retention-days: 7
