@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import { defineRegistry, JSONUIProvider, Renderer } from '@json-render/react';
 import type { Spec } from '@json-render/core';
-import { catalog } from './catalog';
+import { catalog } from '../src/catalog';
 
 export const Navigation = createContext<(href: string) => void>(href => window.location.assign(href));
 const { registry } = defineRegistry(catalog, {
@@ -15,8 +15,6 @@ const { registry } = defineRegistry(catalog, {
     Links: ({ props, children }) => <nav className="link-group" aria-label={props.title}><h2>{props.title}</h2>{children}</nav>,
     Link: ({ props }) => {
       const navigate = useContext(Navigation);
-      // Only the deterministic compiler supplies href. A final guard also rejects
-      // protocol-relative and arbitrary links if a future compiler regresses.
       const safe = props.href.startsWith('/view?') || props.href.startsWith('/search?');
       if (!safe) return <span>{props.label}</span>;
       return <a className="world-link" href={props.href} onClick={e => {
