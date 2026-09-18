@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Spec } from '@json-render/core';
 import { canonicalUrl, pageSchema, searchSchema } from '../src/domain';
-import { compilePage, compileSearch } from './catalog';
+import { catalog } from '../src/catalog';
 import { Navigation, WorldView } from './registry';
 import './style.css';
 
@@ -42,10 +42,11 @@ function App() {
       .then(result => {
         if (ac.signal.aborted) return;
         const document = result.data;
-        setSpec(page ? compilePage(pageSchema.parse(document)) : compileSearch(q,
-          searchSchema.parse({ results: document.results, related: document.related })));
+        if (page) pageSchema.parse(document); else searchSchema.parse({ results: document.results, related: document.related });
+        if (!catalog.validate(result.spec).success) throw new Error('Server returned a spec outside the json-render catalog');
+        setSpec(result.spec);
         setMode(result.mode);
-        setMeta(`${result.cached ? 'Cached observation' : 'New observation'} · ${result.elapsedMs} ms · policy: ${document.policy.source} · generation: ${result.generation}`);
+        setMeta(`${result.cached ? 'Cached observation' : 'New observation'} · ${result.elapsedMs} ms · world policy: ${document.policy.source} · UI: ${result.composition.source}/${result.composition.evaluations} eval · generation: ${result.generation}`);
         window.document.title = `${page ? document.title : q} — AgentWorld`;
       })
       .catch(e => { if (!ac.signal.aborted) setError(e.message || 'Unable to materialize'); })
@@ -75,9 +76,9 @@ function App() {
         <p>Search for anything. Open a result. Follow another link.<br />The world remembers every page you discover.</p>
         <div className="examples">{['deep sea exploration', 'history of computing', 'https://docs.rust-lang.org/book/'].map(q =>
           <button key={q} onClick={() => navigate((q.startsWith('https:') ? '/view?url=' : '/search?q=') + encodeURIComponent(q))}>{q} ↗</button>)}</div>
-        <p className="footnote">Jev chooses the page policy. Your configured model writes structured content. json-render builds the interface.</p>
+        <p className="footnote">Your configured model writes structured content. json-render's official experimental Jev composer chooses the UI tree, grouping and order.</p>
       </section>}
-      {loading && <section className="status" role="status"><div className="spinner" /><h2>Materializing this observation…</h2><p>Policy → content generation → validation → rendering</p></section>}
+      {loading && <section className="status" role="status"><div className="spinner" /><h2>Materializing this observation…</h2><p>Jev world policy → content generation → official json-render Jev composition → validation</p></section>}
       {error && <section className="status error" role="alert"><h2>This observation could not materialize.</h2><p>{error}</p><button onClick={() => setReload(n => n + 1)}>Retry</button></section>}
       {spec && <><div className="metadata">{meta}</div><WorldView spec={spec} /></>}
     </main>
