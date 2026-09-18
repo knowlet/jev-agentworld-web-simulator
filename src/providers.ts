@@ -16,18 +16,39 @@ export class ProviderError extends Error {
 export interface Usage { provider: string; elapsedMs: number; attempts: number; usage?: unknown }
 
 function mockEvaluate(): Experimental_CompositionEvaluator {
-  return async ({ questions }) => ({
-    answers: Object.fromEntries(Object.entries(questions).map(([name, question]) => {
-      const keys = Object.keys(question.criteria);
-      let choice = keys[0]!;
-      if (name === 'root') choice = keys.find(k => k !== 'unavailable') ?? choice;
-      else if (name.startsWith('select_')) choice = keys.find(k => k.startsWith('use:')) ?? (keys.includes('1') ? '1' : choice);
-      else if (name.startsWith('parent_')) choice = keys.find(k => k.startsWith('node_0:')) ?? choice;
-      else if (name.startsWith('order_')) choice = keys.includes('1') ? '1' : choice;
-      return [name, { choice, confidence: 1 }];
-    })),
-    usage: { inputTokens: 0 },
-  });
+  return async ({ state, questions }) => {
+    const selected = Array.isArray(state.selected_elements)
+      ? state.selected_elements as Array<{ id?: string; type?: string; content?: string }>
+      : [];
+    const byId = new Map(selected.map(item => [item.id, item]));
+    return {
+      answers: Object.fromEntries(Object.entries(questions).map(([name, question]) => {
+        const keys = Object.keys(question.criteria);
+        let choice = keys[0]!;
+        if (name === 'root') choice = keys.find(k => k !== 'unavailable') ?? choice;
+        else if (name.startsWith('select_')) {
+          choice = keys.find(k => k.startsWith('use:')) ?? (keys.includes('1') ? '1' : choice);
+        } else if (name.startsWith('parent_')) {
+          const child = byId.get(name.slice('parent_'.length));
+          const text = (child?.content || '').toLowerCase();
+          if (child?.type === 'Link') {
+            const wanted = text.includes('related search') ? 'related'
+              : text.includes('outgoing navigation') ? 'outgoing'
+              : 'search result';
+            choice = Object.entries(question.criteria).find(([, description]) => {
+              const d = String(description).toLowerCase();
+              return d.includes('links') && d.includes(wanted);
+            })?.[0] ?? choice;
+          } else {
+            choice = Object.entries(question.criteria).find(([, description]) =>
+              String(description).includes('Surface'))?.[0] ?? choice;
+          }
+        } else if (name.startsWith('order_')) choice = keys.includes('1') ? '1' : choice;
+        return [name, { choice, confidence: 1 }];
+      })),
+      usage: { inputTokens: 0 },
+    };
+  };
 }
 
 export class Providers {
