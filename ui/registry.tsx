@@ -28,5 +28,5 @@ const { registry } = defineRegistry(catalog, {
   },
 });
 export function WorldView({ spec }: { spec: Spec }) {
-  return <JSONUIProvider><Renderer spec={spec} registry={registry} /></JSONUIProvider>;
+  return <JSONUIProvider registry={registry}><Renderer spec={spec} registry={registry} /></JSONUIProvider>;
 }
