@@ -97,6 +97,20 @@ function requireTypes(spec: Spec, required: string[]) {
   for (const type of required) if (!types.has(type)) throw new Error(`Composed spec omitted required ${type} content.`);
 }
 
+function requireLinksGrouped(spec: Spec) {
+  const grouped = new Set<string>();
+  for (const element of Object.values(spec.elements)) {
+    if (element.type !== 'Links') continue;
+    for (const id of element.children ?? []) grouped.add(id);
+    for (const value of Object.values(element.slots ?? {})) {
+      if (Array.isArray(value)) for (const id of value) if (typeof id === 'string') grouped.add(id);
+    }
+  }
+  for (const [id, element] of Object.entries(spec.elements)) {
+    if (element.type === 'Link' && !grouped.has(id)) throw new Error('Composed spec placed a navigation Link outside a Links container.');
+  }
+}
+
 async function compose(
   candidates: readonly Experimental_CompositionCandidate[],
   prompt: string,
@@ -138,6 +152,7 @@ async function compose(
   }
   if (!catalog.validate(finalSpec).success) throw new Error('json-render Jev composition returned a spec outside the catalog.');
   requireTypes(finalSpec, requiredTypes);
+  requireLinksGrouped(finalSpec);
   return { spec: finalSpec, composition: {
     source, stopReason: 'finish', evaluations: complete.evaluations, inputTokens: complete.inputTokens,
   } };
@@ -147,12 +162,12 @@ export function composePage(page: Page, evaluate: Experimental_CompositionEvalua
   return compose(pageCandidates(page),
     `Compose a complete simulated web page for ${page.url}. Preserve every required generated section and outgoing link. The world-policy page type is ${page.policy.layout}; Jev should choose the final component tree, grouping, and order.`,
     { kind: 'page', url: page.url, site: page.siteName, title: page.title, worldPolicy: page.policy.layout },
-    evaluate, config, config.mode === 'mock' ? 'mock' : 'json-render-jev', ['Surface', 'Header', 'Section', 'Link']);
+    evaluate, config, config.mode === 'mock' ? 'mock' : 'json-render-jev', ['Surface', 'Header', 'Section', 'Links', 'Link']);
 }
 
 export function composeSearch(query: string, data: Search, evaluate: Experimental_CompositionEvaluator, config: Config) {
   return compose(searchCandidates(query, data),
     `Compose a simulated search-results page for the query ${JSON.stringify(short(query, 200))}. Include the heading and all required search-result links; related searches are optional.`,
     { kind: 'search', query: short(query, 200), resultCount: data.results.length },
-    evaluate, config, config.mode === 'mock' ? 'mock' : 'json-render-jev', ['Surface', 'Header', 'Link']);
+    evaluate, config, config.mode === 'mock' ? 'mock' : 'json-render-jev', ['Surface', 'Header', 'Links', 'Link']);
 }
