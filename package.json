@@ -1,21 +1,22 @@
 {
   "name": "jev-agentworld-web-simulator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22.16.0" },
+  "engines": { "node": ">=24.0.0" },
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "node scripts/verify-json-render.mjs && node scripts/build.mjs",
     "start": "node --env-file-if-exists=.env --import tsx src/main.ts",
     "dev": "npm run build && node --watch --env-file-if-exists=.env --import tsx src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:e2e": "playwright test",
-    "test:live": "node --env-file-if-exists=.env --import tsx scripts/live.ts"
+    "test:live": "node --env-file-if-exists=.env --import tsx scripts/live.ts",
+    "verify:json-render": "node scripts/verify-json-render.mjs"
   },
   "dependencies": {
-    "@json-render/core": "0.21.0",
+    "@json-render/core": "file:vendor/json-render-core-3ad38188.tgz",
     "@json-render/react": "0.21.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
