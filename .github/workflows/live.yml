@@ -34,9 +34,8 @@ jobs:
       - name: Require Jev secret (never fall back to mocks)
         run: |
           if [ -z "$JEV_API_KEY" ]; then echo 'Missing JEV_API_KEY or TYPESAFE_API_KEY'; exit 1; fi
-      - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Install locked dependencies
+        run: npm ci
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - name: Exercise both live providers and Chromium
