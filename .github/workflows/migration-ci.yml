@@ -1,4 +1,5 @@
 name: Migration validation
+# rerun: link placement fix
 on:
   push:
     paths:
