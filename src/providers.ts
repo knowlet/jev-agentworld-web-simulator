@@ -35,13 +35,13 @@ function mockEvaluate(): Experimental_CompositionEvaluator {
             const wanted = text.includes('related search') ? 'related'
               : text.includes('outgoing navigation') ? 'outgoing'
               : 'search result';
-            choice = Object.entries(question.criteria).find(([, description]) => {
-              const d = String(description).toLowerCase();
-              return d.includes('links') && d.includes(wanted);
+            choice = Object.entries(question.criteria).find(([key, description]) => {
+              const parent = byId.get(key.split(':', 1)[0]);
+              return parent?.type === 'Links' && String(description).toLowerCase().includes(wanted);
             })?.[0] ?? choice;
           } else {
-            choice = Object.entries(question.criteria).find(([, description]) =>
-              String(description).includes('Surface'))?.[0] ?? choice;
+            choice = Object.keys(question.criteria).find(key =>
+              byId.get(key.split(':', 1)[0])?.type === 'Surface') ?? choice;
           }
         } else if (name.startsWith('order_')) choice = keys.includes('1') ? '1' : choice;
         return [name, { choice, confidence: 1 }];
